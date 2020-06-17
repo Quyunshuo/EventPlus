@@ -76,10 +76,83 @@ public class EventPlus {
      * @param subscriber 订阅者
      */
     public void register(Object subscriber) {
+        // 先从容器中查询有无此订阅者
         List<MethodManager> methods = map.get(subscriber);
+        // 如果没有  就进行下一步操作
         if (methods == null) {
+            // 查找该订阅者的订阅方法
             List<MethodManager> methodList = findMethod(subscriber);
+            // 将订阅者及订阅方法put进容器内
             map.put(subscriber, methodList);
+        }
+    }
+
+    /**
+     * 取消注册
+     *
+     * @param object 订阅者
+     */
+    public void unregister(Object object) {
+        map.remove(object);
+    }
+
+    /**
+     * 连接通道 发送事件
+     *
+     * @param event 事件
+     */
+    public void post(Object event) {
+        // 得到容器中所有的订阅者
+        Set<Object> keySet = map.keySet();
+        // 遍历所有的订阅者
+        for (Object o : keySet) {
+            // 获取订阅者对应的订阅方法
+            List<MethodManager> methods = map.get(o);
+            if (methods != null) {
+                for (MethodManager method : methods) {
+                    // 匹配订阅方法
+                    // 得到这个方法的接收参数类型
+                    Class<?> type = method.getType();
+                    // 判断类型是否相同
+                    if (type.isAssignableFrom(event.getClass())) {
+                        // 判断订阅方法指定的线程模式
+                        judgmentThread(method, event, o);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 判断线程并执行订阅方法
+     *
+     * @param method     订阅方法的封装类
+     * @param event      事件
+     * @param subscriber 订阅者
+     */
+    private void judgmentThread(final MethodManager method, final Object event, final Object subscriber) {
+        switch (method.getThreadModel()) {
+            case POSTING:
+                invoke(method.getMethod(), event, subscriber);
+                break;
+            case MAIN:
+                // 判断当前的线程
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    invoke(method.getMethod(), event, subscriber);
+                } else {
+                    // 如果不是主线程就需要切换线程
+                    handler.post(() -> invoke(method.getMethod(), event, subscriber));
+                }
+                break;
+            case BACKGROUND:
+                // 判断当前的线程
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    // 如果是主线程就需要切换线程
+                    executorService.execute(() -> invoke(method.getMethod(), event, subscriber));
+                } else {
+                    invoke(method.getMethod(), event, subscriber);
+                }
+                break;
         }
     }
 
@@ -115,61 +188,6 @@ public class EventPlus {
     }
 
     /**
-     * 连接通道
-     * 发送事件
-     */
-    public void post(final Object event) {
-        // 得到订阅者集合中的订阅者的集合
-        Set<Object> keySet = map.keySet();
-        // 遍历所有的订阅者
-        for (final Object o : keySet) {
-            // 获取订阅者对应的订阅方法
-            List<MethodManager> methods = map.get(o);
-            for (final MethodManager method : methods) {
-                // 匹配订阅方法
-                // 得到这个方法的接收参数类型
-                Class<?> type = method.getType();
-                if (type.isAssignableFrom(event.getClass())) {
-                    // 判断订阅方法指定的线程模式
-                    switch (method.getThreadModel()) {
-                        case POSTING:
-                            invoke(method.getMethod(), event, o);
-                            break;
-                        case MAIN:
-                            // 判断当前的线程
-                            if (Looper.myLooper() == Looper.getMainLooper()) {
-                                invoke(method.getMethod(), event, o);
-                            } else {
-                                // 如果不是主线程就需要切换线程
-                                handler.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        invoke(method.getMethod(), event, o);
-                                    }
-                                });
-                            }
-                            break;
-                        case BACKGROUND:
-                            // 判断当前的线程
-                            if (Looper.myLooper() == Looper.getMainLooper()) {
-                                // 如果是主线程就需要切换线程
-                                executorService.execute(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        invoke(method.getMethod(), event, o);
-                                    }
-                                });
-                            } else {
-                                invoke(method.getMethod(), event, o);
-                            }
-                            break;
-                    }
-                }
-            }
-        }
-    }
-
-    /**
      * 执行订阅方法
      *
      * @param method 订阅方法本身
@@ -182,12 +200,5 @@ public class EventPlus {
         } catch (IllegalAccessException | InvocationTargetException e) {
             e.printStackTrace();
         }
-    }
-
-    /**
-     * 取消注册
-     */
-    public void unregister(Object object) {
-        map.remove(object);
     }
 }
